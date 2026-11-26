@@ -20,6 +20,9 @@
   select, input[type=number], button { font: inherit; padding: 8px; border-radius: 8px; }
   input[type=number] { width: 80px; }
   canvas { max-width: 100%; touch-action: manipulation; background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
+  #tileList { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
+  #tileList a { display: block; padding: 4px; background: #fff; border-radius: 6px; }
+  #tileList img { display: block; width: 64px; height: 64px; object-fit: contain; border-radius: 0; }
   a.button { display: inline-block; margin-top: 20px; padding: 12px 24px; border-radius: 8px; background: #7c9cff; color: #10131c; font-weight: 600; text-decoration: none; }
 </style>
 </head>
@@ -52,11 +55,27 @@
     <button id="saveColor">Save PNG</button>
   </section>
   <section id="tileTool" hidden>
+    <p><label>Tile mode:
+      <select id="tileMode">
+        <option value="single">Download tiles individually</option>
+        <option value="sheet">Remake tileset without background</option>
+      </select>
+    </label></p>
+    <div id="sheetOptions" hidden>
+      <p>Tap the background color to remove it. You can tap several colors.</p>
+      <p><label>Tolerance: <input type="range" id="sheetTolerance" min="0" max="150" value="30"></label>
+         <button id="sheetReset">Reset</button></p>
+    </div>
     <p><label>Columns <input type="number" id="cols" min="1" max="64" value="10"></label>
        <label>Rows <input type="number" id="rows" min="1" max="64" value="10"></label></p>
     <p>Red lines show where the cuts will be.</p>
     <canvas id="tileCanvas"></canvas><br>
-    <button id="saveTiles">Download tiles (ZIP)</button>
+    <div id="singleOptions">
+      <button id="showTiles">Show tiles</button>
+      <button id="saveTiles">Download all (ZIP)</button>
+      <div id="tileList"></div>
+    </div>
+    <button id="saveSheet" hidden>Save new tileset (PNG)</button>
   </section>
 </main>
 
@@ -71,25 +90,35 @@ Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, ge
 
 let source = null;   // the loaded image for the two game-art tools
 let picked = [];     // colors chosen for removal
+let sheetPicked = []; // colors removed from the remade tileset
 let baseName = "image";
 
 function reset() {
-  source = null; picked = [];
+  source = null; picked = []; sheetPicked = [];
+  clearTiles();
   $("results").hidden = $("download").hidden = $("colorTool").hidden = $("tileTool").hidden = true;
   $("status").textContent = "";
 }
 $("mode").addEventListener("change", reset);
 
-function drawColor() {
-  const c = $("canvas"), g = c.getContext("2d", { willReadFrequently: true });
+function paint(c, colors, tolerance) {
+  const g = c.getContext("2d", { willReadFrequently: true });
   c.width = source.width; c.height = source.height;
   g.drawImage(source, 0, 0);
+  if (!colors.length) return;
   const img = g.getImageData(0, 0, c.width, c.height), d = img.data;
-  const limit = $("tolerance").value ** 2;
+  const limit = tolerance ** 2;
   for (let i = 0; i < d.length; i += 4) {
-    if (picked.some(([r, gr, b]) => (d[i] - r) ** 2 + (d[i+1] - gr) ** 2 + (d[i+2] - b) ** 2 <= limit)) d[i+3] = 0;
+    if (colors.some(([r, gr, b]) => (d[i] - r) ** 2 + (d[i+1] - gr) ** 2 + (d[i+2] - b) ** 2 <= limit)) d[i+3] = 0;
   }
   g.putImageData(img, 0, 0);
+}
+const drawColor = () => paint($("canvas"), picked, $("tolerance").value);
+const paintSheet = c => paint(c, sheetPicked, $("sheetTolerance").value);
+
+function clearTiles() {
+  for (const a of $("tileList").children) URL.revokeObjectURL(a.href);
+  $("tileList").replaceChildren();
 }
 
 const grid = () => ["cols", "rows"].map(id => Math.min(64, Math.max(1, Math.floor($(id).value) || 1)));
@@ -97,9 +126,9 @@ const edge = (i, n, size) => Math.round(i * size / n);
 
 function drawGrid() {
   if (!source) return;
-  const c = $("tileCanvas"), g = c.getContext("2d"), [cols, rows] = grid();
-  c.width = source.width; c.height = source.height;
-  g.drawImage(source, 0, 0);
+  const c = $("tileCanvas"), g = c.getContext("2d", { willReadFrequently: true }), [cols, rows] = grid();
+  if ($("tileMode").value === "sheet") paintSheet(c);
+  else paint(c, [], 0);
   g.fillStyle = "red";
   const line = Math.max(1, Math.round(c.width / 500));
   for (let x = 1; x < cols; x++) g.fillRect(edge(x, cols, c.width), 0, line, c.height);
@@ -125,27 +154,74 @@ $("canvas").addEventListener("click", e => {
 $("tolerance").addEventListener("change", () => source && drawColor());
 $("reset").addEventListener("click", () => { picked = []; drawColor(); });
 $("saveColor").addEventListener("click", async () => save(await toPng($("canvas")), baseName + "-transparent.png"));
-$("cols").addEventListener("input", drawGrid);
-$("rows").addEventListener("input", drawGrid);
+for (const id of ["cols", "rows"]) $(id).addEventListener("input", () => { clearTiles(); drawGrid(); });
 
-$("saveTiles").addEventListener("click", async () => {
+$("tileMode").addEventListener("change", () => {
+  const sheet = $("tileMode").value === "sheet";
+  $("sheetOptions").hidden = $("saveSheet").hidden = !sheet;
+  $("singleOptions").hidden = sheet;
+  $("status").textContent = "";
+  drawGrid();
+});
+$("tileCanvas").addEventListener("click", e => {
+  if ($("tileMode").value !== "sheet") return;
+  const c = $("tileCanvas"), box = c.getBoundingClientRect();
+  const x = Math.floor((e.clientX - box.left) * c.width / box.width);
+  const y = Math.floor((e.clientY - box.top) * c.height / box.height);
+  const one = document.createElement("canvas"); one.width = one.height = 1;
+  const g = one.getContext("2d");
+  g.drawImage(source, x, y, 1, 1, 0, 0, 1, 1);   // read the original, not the red lines
+  const p = g.getImageData(0, 0, 1, 1).data;
+  if (p[3]) { sheetPicked.push([p[0], p[1], p[2]]); drawGrid(); }
+});
+$("sheetTolerance").addEventListener("change", drawGrid);
+$("sheetReset").addEventListener("click", () => { sheetPicked = []; drawGrid(); });
+$("saveSheet").addEventListener("click", async () => {
+  const c = document.createElement("canvas");
+  paintSheet(c);   // same size and layout, no red lines
+  save(await toPng(c), baseName + "-tileset.png");
+});
+
+async function cutTiles() {
+  const [cols, rows] = grid(), c = document.createElement("canvas"), tiles = [];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const left = edge(x, cols, source.width), top = edge(y, rows, source.height);
+    c.width = edge(x + 1, cols, source.width) - left;
+    c.height = edge(y + 1, rows, source.height) - top;
+    c.getContext("2d").drawImage(source, left, top, c.width, c.height, 0, 0, c.width, c.height);
+    tiles.push({ name: `${baseName}_r${y + 1}_c${x + 1}.png`, blob: await toPng(c) });
+  }
+  return tiles;
+}
+
+async function withStatus(task) {
   try {
     $("status").textContent = "Cutting tiles...";
-    const { default: JSZip } = await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm");
-    const zip = new JSZip(), [cols, rows] = grid(), c = document.createElement("canvas");
-    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-      const left = edge(x, cols, source.width), top = edge(y, rows, source.height);
-      c.width = edge(x + 1, cols, source.width) - left;
-      c.height = edge(y + 1, rows, source.height) - top;
-      c.getContext("2d").drawImage(source, left, top, c.width, c.height, 0, 0, c.width, c.height);
-      zip.file(`${baseName}_r${y + 1}_c${x + 1}.png`, await toPng(c));
-    }
-    save(await zip.generateAsync({ type: "blob" }), baseName + "-tiles.zip");
-    $("status").textContent = `Saved ${cols * rows} tiles.`;
+    $("status").textContent = await task();
   } catch (err) {
     $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
   }
-});
+}
+
+$("showTiles").addEventListener("click", () => withStatus(async () => {
+  const tiles = await cutTiles();
+  clearTiles();
+  for (const { name, blob } of tiles) {
+    const a = document.createElement("a"), img = new Image();
+    a.href = img.src = URL.createObjectURL(blob);
+    a.download = img.alt = name;
+    a.append(img); $("tileList").append(a);
+  }
+  return `Tap a tile to download it (${tiles.length} tiles).`;
+}));
+
+$("saveTiles").addEventListener("click", () => withStatus(async () => {
+  const { default: JSZip } = await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm");
+  const zip = new JSZip(), tiles = await cutTiles();
+  for (const { name, blob } of tiles) zip.file(name, blob);
+  save(await zip.generateAsync({ type: "blob" }), baseName + "-tiles.zip");
+  return `Saved ${tiles.length} tiles.`;
+}));
 
 async function handle(file) {
   if (!file || busy) return;
