@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Background Remover</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px 16px; font-family: system-ui, sans-serif; background: #14161c; color: #eef0f5; }
+  main { max-width: 900px; margin: auto; text-align: center; }
+  #drop { display: block; border: 2px dashed #6b7280; border-radius: 14px; padding: 44px 16px; cursor: pointer; }
+  #drop.over, #drop:hover, #drop:focus-within { border-color: #7c9cff; background: #1c2030; }
+  #file { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  #status { min-height: 24px; }
+  #results { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  [hidden] { display: none !important; }
+  figure { margin: 0; }
+  img { max-width: 100%; border-radius: 10px; }
+  #after { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
+  a.button { display: inline-block; margin-top: 20px; padding: 12px 24px; border-radius: 8px; background: #7c9cff; color: #10131c; font-weight: 600; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Background Remover</h1>
+  <p>Your image is processed on your own device and is not uploaded.</p>
+  <label id="drop">
+    <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
+    Click to choose an image, or drag it here (PNG, JPG, WEBP)
+  </label>
+  <p id="status" role="status"></p>
+  <div id="results" hidden>
+    <figure><img id="before" alt="Original image"><figcaption>Original</figcaption></figure>
+    <figure id="afterBox" hidden><img id="after" alt="Image without background"><figcaption>Result</figcaption></figure>
+  </div>
+  <a id="download" class="button" hidden>Download PNG</a>
+</main>
+
+<script type="module">
+const LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
+const $ = id => document.getElementById(id);
+let busy = false;
+
+// Run the AI on one thread. Multithreading needs data to be copied between
+// threads, which some browsers refuse on a local file or a plain static host.
+Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, get: () => 1 });
+
+async function handle(file) {
+  if (!file || busy) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    $("status").textContent = "Please choose a PNG, JPG or WEBP image.";
+    return;
+  }
+  busy = true;
+  URL.revokeObjectURL($("before").src);
+  URL.revokeObjectURL($("after").src);
+  $("before").src = URL.createObjectURL(file);
+  $("results").hidden = false;
+  $("afterBox").hidden = true;
+  $("download").hidden = true;
+  $("status").textContent = "Loading the AI model (the first time takes a while)...";
+  try {
+    const { removeBackground } = await import(LIB);
+    const blob = await removeBackground(file, {
+      progress: (key, current, total) => {
+        $("status").textContent = key.startsWith("fetch") && total
+          ? `Downloading model files: ${Math.round(current / total * 100)}%`
+          : "Removing background...";
+      }
+    });
+    const url = URL.createObjectURL(blob);
+    $("after").src = url;
+    $("afterBox").hidden = false;
+    $("download").href = url;
+    $("download").download = file.name.replace(/\.[^.]+$/, "") + "-no-bg.png";
+    $("download").hidden = false;
+    $("status").textContent = "Done!";
+  } catch (err) {
+    console.error(err);
+    $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
+  } finally {
+    busy = false;
+  }
+}
+
+$("file").addEventListener("change", e => { handle(e.target.files[0]); e.target.value = ""; });
+for (const type of ["dragenter", "dragover", "dragleave", "drop"]) {
+  window.addEventListener(type, e => {
+    e.preventDefault();
+    $("drop").classList.toggle("over", type === "dragenter" || type === "dragover");
+    if (type === "drop") handle(e.dataTransfer.files[0]);
+  });
+}
+</script>
+</body>
+</html>
