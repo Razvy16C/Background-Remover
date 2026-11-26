@@ -17,6 +17,9 @@
   figure { margin: 0; }
   img { max-width: 100%; border-radius: 10px; }
   #after { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
+  select, input[type=number], button { font: inherit; padding: 8px; border-radius: 8px; }
+  input[type=number] { width: 80px; }
+  canvas { max-width: 100%; touch-action: manipulation; background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
   a.button { display: inline-block; margin-top: 20px; padding: 12px 24px; border-radius: 8px; background: #7c9cff; color: #10131c; font-weight: 600; text-decoration: none; }
 </style>
 </head>
@@ -24,6 +27,13 @@
 <main>
   <h1>Background Remover</h1>
   <p>Your image is processed on your own device and is not uploaded.</p>
+  <p><label>Mode:
+    <select id="mode">
+      <option value="ai">AI: photos of people and objects</option>
+      <option value="color">Remove one color</option>
+      <option value="tiles">Split a tileset</option>
+    </select>
+  </label></p>
   <label id="drop">
     <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
     Click to choose an image, or drag it here (PNG, JPG, WEBP)
@@ -34,6 +44,20 @@
     <figure id="afterBox" hidden><img id="after" alt="Image without background"><figcaption>Result</figcaption></figure>
   </div>
   <a id="download" class="button" hidden>Download PNG</a>
+  <section id="colorTool" hidden>
+    <p>Tap the color you want to make transparent. You can tap several colors.</p>
+    <p><label>Tolerance: <input type="range" id="tolerance" min="0" max="150" value="30"></label>
+       <button id="reset">Reset</button></p>
+    <canvas id="canvas"></canvas><br>
+    <button id="saveColor">Save PNG</button>
+  </section>
+  <section id="tileTool" hidden>
+    <p><label>Columns <input type="number" id="cols" min="1" max="64" value="10"></label>
+       <label>Rows <input type="number" id="rows" min="1" max="64" value="10"></label></p>
+    <p>Red lines show where the cuts will be.</p>
+    <canvas id="tileCanvas"></canvas><br>
+    <button id="saveTiles">Download tiles (ZIP)</button>
+  </section>
 </main>
 
 <script type="module">
@@ -45,13 +69,102 @@ let busy = false;
 // threads, which some browsers refuse on a local file or a plain static host.
 Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, get: () => 1 });
 
+let source = null;   // the loaded image for the two game-art tools
+let picked = [];     // colors chosen for removal
+let baseName = "image";
+
+function reset() {
+  source = null; picked = [];
+  $("results").hidden = $("download").hidden = $("colorTool").hidden = $("tileTool").hidden = true;
+  $("status").textContent = "";
+}
+$("mode").addEventListener("change", reset);
+
+function drawColor() {
+  const c = $("canvas"), g = c.getContext("2d", { willReadFrequently: true });
+  c.width = source.width; c.height = source.height;
+  g.drawImage(source, 0, 0);
+  const img = g.getImageData(0, 0, c.width, c.height), d = img.data;
+  const limit = $("tolerance").value ** 2;
+  for (let i = 0; i < d.length; i += 4) {
+    if (picked.some(([r, gr, b]) => (d[i] - r) ** 2 + (d[i+1] - gr) ** 2 + (d[i+2] - b) ** 2 <= limit)) d[i+3] = 0;
+  }
+  g.putImageData(img, 0, 0);
+}
+
+const grid = () => ["cols", "rows"].map(id => Math.min(64, Math.max(1, Math.floor($(id).value) || 1)));
+const edge = (i, n, size) => Math.round(i * size / n);
+
+function drawGrid() {
+  if (!source) return;
+  const c = $("tileCanvas"), g = c.getContext("2d"), [cols, rows] = grid();
+  c.width = source.width; c.height = source.height;
+  g.drawImage(source, 0, 0);
+  g.fillStyle = "red";
+  const line = Math.max(1, Math.round(c.width / 500));
+  for (let x = 1; x < cols; x++) g.fillRect(edge(x, cols, c.width), 0, line, c.height);
+  for (let y = 1; y < rows; y++) g.fillRect(0, edge(y, rows, c.height), c.width, line);
+}
+
+const toPng = c => new Promise((ok, fail) => c.toBlob(b => b ? ok(b) : fail(new Error("Image is too large")), "image/png"));
+
+function save(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+$("canvas").addEventListener("click", e => {
+  const c = $("canvas"), box = c.getBoundingClientRect();
+  const x = Math.floor((e.clientX - box.left) * c.width / box.width);
+  const y = Math.floor((e.clientY - box.top) * c.height / box.height);
+  const p = c.getContext("2d").getImageData(x, y, 1, 1).data;
+  if (p[3]) { picked.push([p[0], p[1], p[2]]); drawColor(); }
+});
+$("tolerance").addEventListener("change", () => source && drawColor());
+$("reset").addEventListener("click", () => { picked = []; drawColor(); });
+$("saveColor").addEventListener("click", async () => save(await toPng($("canvas")), baseName + "-transparent.png"));
+$("cols").addEventListener("input", drawGrid);
+$("rows").addEventListener("input", drawGrid);
+
+$("saveTiles").addEventListener("click", async () => {
+  try {
+    $("status").textContent = "Cutting tiles...";
+    const { default: JSZip } = await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm");
+    const zip = new JSZip(), [cols, rows] = grid(), c = document.createElement("canvas");
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const left = edge(x, cols, source.width), top = edge(y, rows, source.height);
+      c.width = edge(x + 1, cols, source.width) - left;
+      c.height = edge(y + 1, rows, source.height) - top;
+      c.getContext("2d").drawImage(source, left, top, c.width, c.height, 0, 0, c.width, c.height);
+      zip.file(`${baseName}_r${y + 1}_c${x + 1}.png`, await toPng(c));
+    }
+    save(await zip.generateAsync({ type: "blob" }), baseName + "-tiles.zip");
+    $("status").textContent = `Saved ${cols * rows} tiles.`;
+  } catch (err) {
+    $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
+  }
+});
+
 async function handle(file) {
   if (!file || busy) return;
   if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
     $("status").textContent = "Please choose a PNG, JPG or WEBP image.";
     return;
   }
+  baseName = file.name.replace(/\.[^.]+$/, "");
+  const mode = $("mode").value;
+  if (mode !== "ai") {
+    reset();
+    source = await createImageBitmap(file);
+    $(mode === "color" ? "colorTool" : "tileTool").hidden = false;
+    mode === "color" ? drawColor() : drawGrid();
+    return;
+  }
+  $("colorTool").hidden = $("tileTool").hidden = true;
   busy = true;
+  $("mode").disabled = true;
   URL.revokeObjectURL($("before").src);
   URL.revokeObjectURL($("after").src);
   $("before").src = URL.createObjectURL(file);
@@ -80,6 +193,7 @@ async function handle(file) {
     $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
   } finally {
     busy = false;
+    $("mode").disabled = false;
   }
 }
 
