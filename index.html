@@ -1,286 +1,151 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Background Remover</title>
-<style>
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 32px 16px; font-family: system-ui, sans-serif; background: #14161c; color: #eef0f5; }
-  main { max-width: 900px; margin: auto; text-align: center; }
-  #drop { display: block; border: 2px dashed #6b7280; border-radius: 14px; padding: 44px 16px; cursor: pointer; }
-  #drop.over, #drop:hover, #drop:focus-within { border-color: #7c9cff; background: #1c2030; }
-  #file { position: absolute; opacity: 0; width: 1px; height: 1px; }
-  #status { min-height: 24px; }
-  #results { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-  [hidden] { display: none !important; }
-  figure { margin: 0; }
-  img { max-width: 100%; border-radius: 10px; }
-  #after { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
-  select, input[type=number], button { font: inherit; padding: 8px; border-radius: 8px; }
-  input[type=number] { width: 80px; }
-  canvas { max-width: 100%; touch-action: manipulation; background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
-  #tileList { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
-  #tileList a { display: block; padding: 4px; background: #fff; border-radius: 6px; }
-  #tileList img { display: block; width: 64px; height: 64px; object-fit: contain; border-radius: 0; }
-  a.button { display: inline-block; margin-top: 20px; padding: 12px 24px; border-radius: 8px; background: #7c9cff; color: #10131c; font-weight: 600; text-decoration: none; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14161c">
+  <title>Background Remover</title>
+  <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-<main>
-  <h1>Background Remover</h1>
-  <p>Your image is processed on your own device and is not uploaded.</p>
-  <p><label>Mode:
-    <select id="mode">
-      <option value="ai">AI: photos of people and objects</option>
-      <option value="color">Remove one color</option>
-      <option value="tiles">Split a tileset</option>
-    </select>
-  </label></p>
-  <label id="drop">
-    <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
-    Click to choose an image, or drag it here (PNG, JPG, WEBP)
-  </label>
-  <p id="status" role="status"></p>
-  <div id="results" hidden>
-    <figure><img id="before" alt="Original image"><figcaption>Original</figcaption></figure>
-    <figure id="afterBox" hidden><img id="after" alt="Image without background"><figcaption>Result</figcaption></figure>
-  </div>
-  <a id="download" class="button" hidden>Download PNG</a>
-  <section id="colorTool" hidden>
-    <p>Tap the color you want to make transparent. You can tap several colors.</p>
-    <p><label>Tolerance: <input type="range" id="tolerance" min="0" max="150" value="30"></label>
-       <button id="reset">Reset</button></p>
-    <canvas id="canvas"></canvas><br>
-    <button id="saveColor">Save PNG</button>
-  </section>
-  <section id="tileTool" hidden>
-    <p><label>Tile mode:
-      <select id="tileMode">
-        <option value="single">Download tiles individually</option>
-        <option value="sheet">Remake tileset without background</option>
-      </select>
-    </label></p>
-    <div id="sheetOptions" hidden>
-      <p>Tap the background color to remove it. You can tap several colors.</p>
-      <p><label>Tolerance: <input type="range" id="sheetTolerance" min="0" max="150" value="30"></label>
-         <button id="sheetReset">Reset</button></p>
+  <main>
+    <h1>Background Remover</h1>
+    <p>Your image is processed on your own device and is not uploaded.</p>
+
+    <label id="drop" for="file">
+      <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
+      Click to choose an image, or drag it here (PNG, JPG, WEBP)
+    </label>
+
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <div id="results" hidden>
+      <figure>
+        <img id="before" alt="Original image">
+        <figcaption>Original</figcaption>
+      </figure>
+      <figure id="afterBox" hidden>
+        <img id="after" alt="Image without background">
+        <figcaption>Result</figcaption>
+      </figure>
     </div>
-    <p><label>Columns <input type="number" id="cols" min="1" max="64" value="10"></label>
-       <label>Rows <input type="number" id="rows" min="1" max="64" value="10"></label></p>
-    <p>Red lines show where the cuts will be.</p>
-    <canvas id="tileCanvas"></canvas><br>
-    <div id="singleOptions">
-      <button id="showTiles">Show tiles</button>
-      <button id="saveTiles">Download all (ZIP)</button>
-      <div id="tileList"></div>
-    </div>
-    <button id="saveSheet" hidden>Save new tileset (PNG)</button>
-  </section>
-</main>
 
-<script type="module">
-const LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
-const $ = id => document.getElementById(id);
-let busy = false;
+    <a id="download" class="button" hidden>Download PNG</a>
+  </main>
 
-// Run the AI on one thread. Multithreading needs data to be copied between
-// threads, which some browsers refuse on a local file or a plain static host.
-Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, get: () => 1 });
+  <!-- Floating Dock -->
+  <nav class="dock" aria-label="Quick navigation">
+    <button class="dock-item is-active" type="button" aria-label="Home" aria-pressed="true" data-dock-item="home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>
+    </button>
+    <button class="dock-item" type="button" aria-label="Calendar" aria-pressed="false" data-dock-item="calendar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
+    </button>
+    <button class="dock-item" type="button" aria-label="Mail" aria-pressed="false" data-dock-item="mail">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+    </button>
+    <button class="dock-item" type="button" aria-label="Music" aria-pressed="false" data-dock-item="music">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+    </button>
 
-let source = null;   // the loaded image for the two game-art tools
-let picked = [];     // colors chosen for removal
-let sheetPicked = []; // colors removed from the remade tileset
-let baseName = "image";
+    <span class="dock-separator" aria-hidden="true"></span>
 
-function reset() {
-  source = null; picked = []; sheetPicked = [];
-  clearTiles();
-  $("results").hidden = $("download").hidden = $("colorTool").hidden = $("tileTool").hidden = true;
-  $("status").textContent = "";
-}
-$("mode").addEventListener("change", reset);
+    <button class="dock-item" type="button" aria-label="GitHub" aria-pressed="false" data-dock-item="github">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 6v-3.9a3.4 3.4 0 0 0-.9-2.7c3-.3 6.1-1.5 6.1-6.7a5.2 5.2 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6S17.5 1.2 14 3.5a13.3 13.3 0 0 0-7 0C3.5 1.2 2.3 1.5 2.3 1.5a4.8 4.8 0 0 0-.1 3.6A5.2 5.2 0 0 0 .8 8.7c0 5.2 3.1 6.4 6.1 6.7A3.4 3.4 0 0 0 6 18.1V22"/></svg>
+    </button>
+    <button class="dock-item" type="button" aria-label="Sparkles" aria-pressed="false" data-dock-item="sparkles">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2zM19 14l1.1 2.9L23 18l-2.9 1.1L19 22l-1.1-2.9L15 18l2.9-1.1zM5 2l.8 2.2L8 5l-2.2.8L5 8l-.8-2.2L2 5l2.2-.8z"/></svg>
+    </button>
+    <button class="dock-item" type="button" aria-label="Settings" aria-pressed="false" data-dock-item="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9z"/></svg>
+    </button>
+  </nav>
 
-function paint(c, colors, tolerance) {
-  const g = c.getContext("2d", { willReadFrequently: true });
-  c.width = source.width; c.height = source.height;
-  g.drawImage(source, 0, 0);
-  if (!colors.length) return;
-  const img = g.getImageData(0, 0, c.width, c.height), d = img.data;
-  const limit = tolerance ** 2;
-  for (let i = 0; i < d.length; i += 4) {
-    if (colors.some(([r, gr, b]) => (d[i] - r) ** 2 + (d[i+1] - gr) ** 2 + (d[i+2] - b) ** 2 <= limit)) d[i+3] = 0;
-  }
-  g.putImageData(img, 0, 0);
-}
-const drawColor = () => paint($("canvas"), picked, $("tolerance").value);
-const paintSheet = c => paint(c, sheetPicked, $("sheetTolerance").value);
-
-function clearTiles() {
-  for (const a of $("tileList").children) URL.revokeObjectURL(a.href);
-  $("tileList").replaceChildren();
-}
-
-const grid = () => ["cols", "rows"].map(id => Math.min(64, Math.max(1, Math.floor($(id).value) || 1)));
-const edge = (i, n, size) => Math.round(i * size / n);
-
-function drawGrid() {
-  if (!source) return;
-  const c = $("tileCanvas"), g = c.getContext("2d", { willReadFrequently: true }), [cols, rows] = grid();
-  if ($("tileMode").value === "sheet") paintSheet(c);
-  else paint(c, [], 0);
-  g.fillStyle = "red";
-  const line = Math.max(1, Math.round(c.width / 500));
-  for (let x = 1; x < cols; x++) g.fillRect(edge(x, cols, c.width), 0, line, c.height);
-  for (let y = 1; y < rows; y++) g.fillRect(0, edge(y, rows, c.height), c.width, line);
-}
-
-const toPng = c => new Promise((ok, fail) => c.toBlob(b => b ? ok(b) : fail(new Error("Image is too large")), "image/png"));
-
-function save(blob, name) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob); a.download = name;
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-}
-
-$("canvas").addEventListener("click", e => {
-  const c = $("canvas"), box = c.getBoundingClientRect();
-  const x = Math.floor((e.clientX - box.left) * c.width / box.width);
-  const y = Math.floor((e.clientY - box.top) * c.height / box.height);
-  const p = c.getContext("2d").getImageData(x, y, 1, 1).data;
-  if (p[3]) { picked.push([p[0], p[1], p[2]]); drawColor(); }
-});
-$("tolerance").addEventListener("change", () => source && drawColor());
-$("reset").addEventListener("click", () => { picked = []; drawColor(); });
-$("saveColor").addEventListener("click", async () => save(await toPng($("canvas")), baseName + "-transparent.png"));
-for (const id of ["cols", "rows"]) $(id).addEventListener("input", () => { clearTiles(); drawGrid(); });
-
-$("tileMode").addEventListener("change", () => {
-  const sheet = $("tileMode").value === "sheet";
-  $("sheetOptions").hidden = $("saveSheet").hidden = !sheet;
-  $("singleOptions").hidden = sheet;
-  $("status").textContent = "";
-  drawGrid();
-});
-$("tileCanvas").addEventListener("click", e => {
-  if ($("tileMode").value !== "sheet") return;
-  const c = $("tileCanvas"), box = c.getBoundingClientRect();
-  const x = Math.floor((e.clientX - box.left) * c.width / box.width);
-  const y = Math.floor((e.clientY - box.top) * c.height / box.height);
-  const one = document.createElement("canvas"); one.width = one.height = 1;
-  const g = one.getContext("2d");
-  g.drawImage(source, x, y, 1, 1, 0, 0, 1, 1);   // read the original, not the red lines
-  const p = g.getImageData(0, 0, 1, 1).data;
-  if (p[3]) { sheetPicked.push([p[0], p[1], p[2]]); drawGrid(); }
-});
-$("sheetTolerance").addEventListener("change", drawGrid);
-$("sheetReset").addEventListener("click", () => { sheetPicked = []; drawGrid(); });
-$("saveSheet").addEventListener("click", async () => {
-  const c = document.createElement("canvas");
-  paintSheet(c);   // same size and layout, no red lines
-  save(await toPng(c), baseName + "-tileset.png");
-});
-
-async function cutTiles() {
-  const [cols, rows] = grid(), c = document.createElement("canvas"), tiles = [];
-  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-    const left = edge(x, cols, source.width), top = edge(y, rows, source.height);
-    c.width = edge(x + 1, cols, source.width) - left;
-    c.height = edge(y + 1, rows, source.height) - top;
-    c.getContext("2d").drawImage(source, left, top, c.width, c.height, 0, 0, c.width, c.height);
-    tiles.push({ name: `${baseName}_r${y + 1}_c${x + 1}.png`, blob: await toPng(c) });
-  }
-  return tiles;
-}
-
-async function withStatus(task) {
-  try {
-    $("status").textContent = "Cutting tiles...";
-    $("status").textContent = await task();
-  } catch (err) {
-    $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
-  }
-}
-
-$("showTiles").addEventListener("click", () => withStatus(async () => {
-  const tiles = await cutTiles();
-  clearTiles();
-  for (const { name, blob } of tiles) {
-    const a = document.createElement("a"), img = new Image();
-    a.href = img.src = URL.createObjectURL(blob);
-    a.download = img.alt = name;
-    a.append(img); $("tileList").append(a);
-  }
-  return `Tap a tile to download it (${tiles.length} tiles).`;
-}));
-
-$("saveTiles").addEventListener("click", () => withStatus(async () => {
-  const { default: JSZip } = await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm");
-  const zip = new JSZip(), tiles = await cutTiles();
-  for (const { name, blob } of tiles) zip.file(name, blob);
-  save(await zip.generateAsync({ type: "blob" }), baseName + "-tiles.zip");
-  return `Saved ${tiles.length} tiles.`;
-}));
-
-async function handle(file) {
-  if (!file || busy) return;
-  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
-    $("status").textContent = "Please choose a PNG, JPG or WEBP image.";
-    return;
-  }
-  baseName = file.name.replace(/\.[^.]+$/, "");
-  const mode = $("mode").value;
-  if (mode !== "ai") {
-    reset();
-    source = await createImageBitmap(file);
-    $(mode === "color" ? "colorTool" : "tileTool").hidden = false;
-    mode === "color" ? drawColor() : drawGrid();
-    return;
-  }
-  $("colorTool").hidden = $("tileTool").hidden = true;
-  busy = true;
-  $("mode").disabled = true;
-  URL.revokeObjectURL($("before").src);
-  URL.revokeObjectURL($("after").src);
-  $("before").src = URL.createObjectURL(file);
-  $("results").hidden = false;
-  $("afterBox").hidden = true;
-  $("download").hidden = true;
-  $("status").textContent = "Loading the AI model (the first time takes a while)...";
-  try {
-    const { removeBackground } = await import(LIB);
-    const blob = await removeBackground(file, {
-      progress: (key, current, total) => {
-        $("status").textContent = key.startsWith("fetch") && total
-          ? `Downloading model files: ${Math.round(current / total * 100)}%`
-          : "Removing background...";
-      }
+  <script>
+    // Dock active state. Replace this handler with real navigation when pages exist.
+    document.querySelectorAll("[data-dock-item]").forEach((item) => {
+      item.addEventListener("click", () => {
+        document.querySelectorAll("[data-dock-item]").forEach((button) => {
+          button.classList.remove("is-active");
+          button.setAttribute("aria-pressed", "false");
+        });
+        item.classList.add("is-active");
+        item.setAttribute("aria-pressed", "true");
+      });
     });
-    const url = URL.createObjectURL(blob);
-    $("after").src = url;
-    $("afterBox").hidden = false;
-    $("download").href = url;
-    $("download").download = file.name.replace(/\.[^.]+$/, "") + "-no-bg.png";
-    $("download").hidden = false;
-    $("status").textContent = "Done!";
-  } catch (err) {
-    console.error(err);
-    $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
-  } finally {
-    busy = false;
-    $("mode").disabled = false;
-  }
-}
+  </script>
 
-$("file").addEventListener("change", e => { handle(e.target.files[0]); e.target.value = ""; });
-for (const type of ["dragenter", "dragover", "dragleave", "drop"]) {
-  window.addEventListener(type, e => {
-    e.preventDefault();
-    $("drop").classList.toggle("over", type === "dragenter" || type === "dragover");
-    if (type === "drop") handle(e.dataTransfer.files[0]);
-  });
-}
-</script>
+  <script type="module">
+    const LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
+    const $ = id => document.getElementById(id);
+    let busy = false;
+
+    // Run the AI on one thread for better compatibility with static hosting.
+    try {
+      Object.defineProperty(navigator, "hardwareConcurrency", {
+        configurable: true,
+        get: () => 1
+      });
+    } catch (error) {
+      console.warn("Could not override hardwareConcurrency:", error);
+    }
+
+    async function handle(file) {
+      if (!file || busy) return;
+
+      if (!/^image\\/(png|jpeg|webp)$/.test(file.type)) {
+        $("status").textContent = "Please choose a PNG, JPG or WEBP image.";
+        return;
+      }
+
+      busy = true;
+      if ($("before").src) URL.revokeObjectURL($("before").src);
+      if ($("after").src) URL.revokeObjectURL($("after").src);
+
+      $("before").src = URL.createObjectURL(file);
+      $("results").hidden = false;
+      $("afterBox").hidden = true;
+      $("download").hidden = true;
+      $("status").textContent = "Loading the AI model (the first time takes a while)...";
+
+      try {
+        const { removeBackground } = await import(LIB);
+        const blob = await removeBackground(file, {
+          progress: (key, current, total) => {
+            $("status").textContent = key.startsWith("fetch") && total
+              ? `Downloading model files: ${Math.round(current / total * 100)}%`
+              : "Removing background...";
+          }
+        });
+
+        const url = URL.createObjectURL(blob);
+        $("after").src = url;
+        $("afterBox").hidden = false;
+        $("download").href = url;
+        $("download").download = file.name.replace(/\\.[^.]+$/, "") + "-no-bg.png";
+        $("download").hidden = false;
+        $("status").textContent = "Done!";
+      } catch (err) {
+        console.error(err);
+        $("status").textContent = `Something went wrong: ${err.name}: ${err.message}`;
+      } finally {
+        busy = false;
+      }
+    }
+
+    $("file").addEventListener("change", e => {
+      handle(e.target.files[0]);
+      e.target.value = "";
+    });
+
+    const drop = $("drop");
+    for (const type of ["dragenter", "dragover", "dragleave", "drop"]) {
+      window.addEventListener(type, e => {
+        e.preventDefault();
+        drop.classList.toggle("over", type === "dragenter" || type === "dragover");
+        if (type === "drop") handle(e.dataTransfer.files[0]);
+      });
+    }
+  </script>
 </body>
 </html>
